@@ -6,7 +6,9 @@ output: html_document
 ---
 
 ```{r global_options, include=FALSE}
-knitr::opts_chunk$set(fig.width=6, fig.height=4, fig.path='Figs_betaDiv_vstFigs/', echo=FALSE, warning=FALSE, message=FALSE)
+require(knit)
+knitr::opts_chunk$set(fig.width=6, fig.height=4, fig.path='Figs_VCF/', echo=FALSE, warning=FALSE, message=FALSE, cache = TRUE)
+knitr::opts_knit$set(root.dir = '~/Downloads')
 ```
 
 ## Plotting Features from GATK vcf calls
@@ -55,7 +57,6 @@ That'll give me a long column that I can import into R for visualization:
 
 ```{r depth}
 require(ggplot2)
-setwd("~/Downloads/")
 depth <- read.csv("depth.txt", header = FALSE)
 theme_set(theme_bw())
 a <- ggplot(depth, aes(V1)) + geom_density(fill="lightblue", alpha=0.5)
