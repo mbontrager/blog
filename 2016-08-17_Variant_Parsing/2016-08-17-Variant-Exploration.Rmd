@@ -6,7 +6,7 @@ output: html_document
 ---
 
 ```{r global_options, include=FALSE}
-knitr::opts_chunk$set(fig.width=12, fig.height=8, fig.path='Figs_betaDiv_vstFigs/', echo=FALSE, warning=FALSE, message=FALSE)
+knitr::opts_chunk$set(fig.width=6, fig.height=4, fig.path='Figs_betaDiv_vstFigs/', echo=FALSE, warning=FALSE, message=FALSE)
 ```
 
 ## Plotting Features from GATK vcf calls
@@ -55,9 +55,11 @@ That'll give me a long column that I can import into R for visualization:
 
 ```{r depth}
 require(ggplot2)
-depth <- read.csv("depth.txt")
+setwd("~/Downloads/")
+depth <- read.csv("depth.txt", header = FALSE)
 theme_set(theme_bw())
-a <- ggplot(depth, aes(X33)) + geom_density()
+a <- ggplot(depth, aes(V1)) + geom_density(fill="lightblue", alpha=0.5)
+a
 ```
 
 You can see that this plot has a VERY long tail extending almost to 8000X coverage. Which is clearly some sort of repetitive element where reads are mapping or something. So I can zoom in on the y-axis a little bit:
@@ -67,5 +69,159 @@ a + xlim(0, 250) + ggtitle("Depth of coverage for VIE GATK vars")
 rm(a, depth)
 ```
 
-Awesome. It looks like most variants are covered around 25-30X.
+Awesome. It looks like most variants are covered around 25-30X. Based on this and some of our other exploratory anlaysis I'm going to exclude any variants that are covered over 200X
 
+---
+
+## Quality by Depth
+
+This is an important parameter for filtering. It is the variant confidence QUAL score divided by the depth of coverage. So by setting a QD cutoff ,filtering anything out less than QD=2.0, for example, we can exclude both low quality and high coverage variants. Honestly this probably makes the exclusion by high depth somewhat redundant, but that's OK.
+
+In this case I want the `QD` parameter, so I'll get that by doing this (I had to replace the `sed` regex because the QD is a float, not an integer):
+
+```
+egrep -v "^#" VIE_GATK.vcf | \
+cut -f 8 | \
+sed 's/^.*;QD=\([0-9]*.[0-9]*\);.*$/\1/' > QD.txt
+```
+
+```{r QD}
+x <- read.csv("QD.txt", header = FALSE)
+x$V1 <- as.numeric(as.character(x$V1))
+a <- ggplot(x, aes(V1)) + 
+    geom_density(fill="lightblue", alpha=0.5) +
+    ggtitle("QD for VIE GATK vars")
+a
+rm(x, a)
+```
+
+When compared to the example plot on the GATK page, this distribution looks left-biased. Which is to say that there are a LOT of variants piling up around QD=2.0. That is their cutoff recommendation. So what does that mean? Are these mostly artifcacts or are they quality variants? I would guess that the pool-seq approach and the sometimes poor mapping shift this distribution left. 
+
+This is something I'm not sure about. Does the major peak of this distribution represent poor-quality variants? I need to explore this but I'm not sure how. Maybe we could do some "ground-truthing" by visually scanning the alignments, finding clear examples of variants, and then checking their QD score? Maybe by eliminating some of these low QD variants we can explore only high-quality data.
+
+---
+
+## FisherStrand (FS)
+
+```
+egrep -v "^#" VIE_GATK.vcf | \
+cut -f 8 | \
+sed 's/^.*;FS=\([0-9]*.[0-9]*\);.*$/\1/' > FS.txt
+```
+
+```{r fs}
+x <- read.csv("FS.txt", header = FALSE)
+x$V1 <- as.numeric(as.character(x$V1))
+a <- ggplot(x, aes(V1)) + 
+    geom_density(fill="lightblue", alpha=0.5) +
+    xlim(0, 30) + 
+    ggtitle("FS for VIE GATK vars")
+a
+```
+
+This is interesting, there are a bunch of FS values that are equal to zero. In theory that is a good thing... that means that there is a low probabilty of strand bias. But it seems weird that they are exactly zero... is this an artifact or just due to the fact that this is a pooled experiment so there is a low probability of strand bias? 
+
+What if I scale the x-axis by log10 like GATK recommends? Clearly the zero values will disappear since log(0) is undefince. But at least we can get a look at the other values:
+
+```{r fs_log}
+a <- a + scale_x_log10()
+a
+rm(x, a)
+```
+
+I'm inclined to think that the zero values are "real" and that there is a very low probability of strand bias at many positions since this is a pooled experiment. Since there are so many  pooled individuals it seems unlikely that we would ever see much of a strand bias. But we should look into it.
+
+The GATK hard-filtering recommendation to to remove variants FS > 60. That seems very reasonable. Maybe even 50.
+
+---
+
+### StrandOddsRatio (SOR)
+
+```
+egrep -v "^#" VIE_GATK.vcf | \
+cut -f 8 | \
+sed 's/^.*;SOR=\([0-9]*.[0-9]*\);.*$/\1/' > SOR.txt
+```
+
+```{r sor}
+x <- read.csv("SOR.txt", header = FALSE)
+x$V1 <- as.numeric(as.character(x$V1))
+a <- ggplot(x, aes(V1)) + 
+    geom_density(fill="lightblue", alpha=0.5) +
+    ggtitle("SOR for VIE GATK vars")
+a
+rm(x, a)
+```
+
+This looks pretty normal based on the GATK document. I think we could leave the filtering parameter to exclude variants SOR > 3
+
+---
+
+### RMS Mapping Quality (MQ)
+
+```
+egrep -v "^#" VIE_GATK.vcf | \
+cut -f 8 | \
+sed 's/^.*;MQ=\([0-9].[0-9]*\);.*$/\1/' > MQ.txt
+```
+
+```{r mq}
+x <- read.csv("MQ.txt", header = FALSE)
+x$V1 <- as.numeric(as.character(x$V1))
+theme_set(theme_bw())
+a <- ggplot(x, aes(V1)) + 
+    geom_density(fill="lightblue", alpha=0.5) +
+    ggtitle("MQ for VIE GATK vars")
+a
+rm(x, a)
+```
+
+Overall we have lower mapping quality than the GATK folks. But that's probably to be expected given the divergence from the reference, etc. What's kind of strange is the large excess of high MQ (>60) that we see compared to the GATK example data. Don't know what that means.
+
+Their recommendation is to filter anything with MQ < 40. That's probably a good value.
+
+### MappingQualityRankSumTest (MQRankSum)
+
+```
+egrep -v "^#" VIE_GATK.vcf | \
+cut -f 8 | \
+sed 's/^.*;MQRankSum=\(\-\{0,1\}[0-9]\{1,\}.[0-9]*\);.*$/\1/' > MQRankSum.txt
+```
+
+```{r MQRankSum}
+x <- read.csv("MQRankSum.txt", header = FALSE)
+x$V1 <- as.numeric(as.character(x$V1))
+theme_set(theme_bw())
+a <- ggplot(x, aes(V1)) + 
+    geom_density(fill="lightblue", alpha=0.5) +
+    ggtitle("MQRankSum for VIE GATK vars")
+a
+rm(x, a)
+```
+
+This is a nice distribution centered on zero. They recommend hard filtereing anything less than -12.5. We could probably even go -10.
+
+---
+
+## ReadPosRankSumTest (ReadPosRankSum)
+
+```
+egrep -v "^#" VIE_GATK.vcf | \
+cut -f 8 | \
+sed 's/^.*;ReadPosRankSum=\(\-\{0,1\}[0-9]\{1,\}.[0-9]*\);.*$/\1/' > ReadPosRankSum.txt
+```
+
+Note that I had to replace the regex for sed so that I could get both negative and positive numbers. That would have been easier if I used extended regex to being with (with `sed -r`) but this will work too.
+
+```{r ReadPosRankSum}
+x <- read.csv("ReadPosRankSum.txt", header = FALSE)
+x$V1 <- as.numeric(as.character(x$V1))
+theme_set(theme_bw())
+a <- ggplot(x, aes(V1)) + 
+    geom_density(fill="lightblue", alpha=0.5) +
+    ggtitle("ReadPosRankSum for VIE GATK vars")
+a
+rm(x, a)
+```
+
+They recommend removing any variant with ReadPosRankSum < -8. It looks like that does exist in our data, so that recommendation seems appropriate.
