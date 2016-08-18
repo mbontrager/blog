@@ -1,0 +1,71 @@
+---
+title: "Plotting VCF Features"
+author: "Martin Bontrager"
+date: "August 17, 2016"
+output: html_document
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8, fig.path='Figs_betaDiv_vstFigs/', echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+## Plotting Features from GATK vcf calls
+
+This is inspired by [this post by the GATK folks](https://software.broadinstitute.org/gatk/guide/article?id=6925) about finding the optimal parameters for hard filtering genomic variant calls. 
+
+As a brief introduction, I have pooled population genomic sequencing from 100 individual copepods (little aquatic invertebrates). I've aligned those data to our reference genome, and after following [GATK best practices](https://software.broadinstitute.org/gatk/best-practices/bp_3step.php?case=GermShortWGS) for removing duplicates, etc., and I have called SNPs/variants with GATK HaplotypeCaller. 
+
+The next step, if it were possible, would be to run GATK variant quality score recalibration. Unfortunately I don't have a "truthed" set of variants since we are working on a non-model organism. Which means I need to filter the GATK variant calls with hard-filtering parameters. GATK has [generic recommendations](https://software.broadinstitute.org/gatk/guide/article?id=3225) for hard filtering, but they are very clear that those recommendations may not work in every situation. 
+
+So what I want to do is to explore properties of the variant data to see if I can tune parameters that will improve our variant filtration. Somewhat easier said than done. The first step is to gather the information I want from the VCF file.
+
+The way I'm doing this is not optimal for large-scale analysis. In that case I'd want to pull out all the columns that I want to examine at once, and replace any missing values with "NA"s. But since I don't want to code that and I'm not aware of a tool that will do it for me, I'm going to analyze this piece by piece. I'll start by looking at the distribution of depth of coverage across variants.
+
+---
+
+## Depth of Coverage
+
+The following commands will be useful for all of the information that I want. First I want to remove the VCF header:
+
+```
+egrep -v "^#" file.vcf > file_no_header.vcf
+```
+
+Next I need to extract the "INFO" column, which happens to be column 8:
+
+```
+cut -f 8 file_no_header.vcf > file_cut.vcf
+```
+
+And then extract only the information I want. In this case I'm using sed to match lines and return only the "DP=##" information:
+
+```
+cat file_cut.vcf | sed 's/^.*;DP=\([0-9]*\);.*$/\1/' > depth.txt
+```
+
+Or if I do it all together:
+
+```
+egrep -v "^#" VIE_GATK.vcf | \
+cut -f 8 | \
+sed 's/^.*;DP=\([0-9]*\);.*$/\1/' > depth.txt
+```
+
+That'll give me a long column that I can import into R for visualization:
+
+```{r depth}
+require(ggplot2)
+depth <- read.csv("depth.txt")
+theme_set(theme_bw())
+a <- ggplot(depth, aes(X33)) + geom_density()
+```
+
+You can see that this plot has a VERY long tail extending almost to 8000X coverage. Which is clearly some sort of repetitive element where reads are mapping or something. So I can zoom in on the y-axis a little bit:
+
+```{r depth_zoom}
+a + xlim(0, 250) + ggtitle("Depth of coverage for VIE GATK vars")
+rm(a, depth)
+```
+
+Awesome. It looks like most variants are covered around 25-30X.
+

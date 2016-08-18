@@ -1,0 +1,321 @@
+---
+title: "Mapping in R"
+author: "Martin Bontrager"
+date: "August 1, 2016"
+output: html_document
+---
+
+# Introduction
+
+I'm in the process of writing a manuscript that will include a figure with at least one map of sampling locations. I could make the map with Gimp or Inkscape using online resources and/or stock map images, but as a part of this project I decided to try to learn more about how to creat and plot maps in R. 
+
+I have a specific need, which is not necessarily for data exploration or visualization, but just to map sampling locations on a very simple map. 
+
+There are a few good resources available online already. In particular the following tutorials are very useful:
+
+* [Making Maps with R | The Molecular Ecologist](http://www.molecularecologist.com/2012/09/making-maps-with-r/)
+* [Making Maps in R | Kevin Johnson](http://www.kevjohnson.org/making-maps-in-r/)
+* [Making Maps With R | Eric C. Anderson](http://eriqande.github.io/rep-res-web/lectures/making-maps-with-R.html)
+
+These are good resources, but I also think that my experiences might prove useful for others. So I thought I'd post some of my workflow.
+
+First I should explain the goal of what I'm trying to create. I have 14 sampling location between the U.S. and Europe and I want to plot some simple maps of these locations. I have samples from sites representing three independent lineages of a copepod species from both freshwater and saltwater. It turns out that was more complicated that I thought initially. 
+
+For this work I'll need to install and load the following libraries:
+* ggplot2
+* mapdata
+* maptools
+* dplyr
+* RColorBrewer
+
+---
+
+# Point and Map Data
+
+First I'll load a metadata file which includes sampling location longitude and latitude for all 14 of my samples. This file is available at [the github repo](https://github.com/mbontrager/16S_processing/blob/master/manuscript_analyses/data/16S_metadata.csv)
+
+
+```{r load_libraries, message=FALSE}
+require(dplyr); require(RColorBrewer); require(ggplot2)
+require(mapdata); require(maptools)
+sample_data <- read.csv("metadata.csv", header = TRUE)
+head(sample_data)
+```
+
+You can see that this is a pretty simple set of observations. It's very easy to do this with your own data if you have the latitude and longitude for your data points. It's best to have these data in decimal degrees as opposed to degrees-minutes-seconds format. 
+
+I need to subset these points based on the WaterType and Region. "WaterType" can be either saltwater or freshwater. The "Region" variable in these data represents one of three independent lineages of this copepod which has invaded from saline to freshwater. I need to subset the data so that I can plot points by different colors. First I'll plot the points in North America, since I want one map for that and one for the samples in Europe:
+
+I'm using the `RColorBrewer`, and use the "paired" pallete to pick colors for plotting purposes:
+
+```{r filter_data}
+#Filter by region/water type and set colors
+NE_fresh <- filter(sample_data, Region=="Northeast", WaterType=="Fresh")
+NF <- brewer.pal(6, "Paired")[5]
+NE_salt <- filter(sample_data, Region=="Northeast", WaterType=="Salt")
+NS <- brewer.pal(6, "Paired")[6]
+
+South_fresh <- filter(sample_data, Region=="South", WaterType=="Fresh")
+SF <- brewer.pal(6, "Paired")[3]
+South_salt <- filter(sample_data, Region=="South", WaterType=="Salt")
+SS <- brewer.pal(6, "Paired")[4]
+
+```
+
+Now that the data is filtered and ready to be plotted, I need to create maps. It turns out that there are a lot of ways to map things in R, as you might expect. I want something simple and that's easy to interpret. I'm using the `mapdata` and `maptools` packages to load in country-by-country data from the U.S., Mexico, and Canada. 
+
+```{r map_data}
+usa <- map_data("usa")
+canada <- map_data("worldHires", "Canada")
+mexico <- map_data("worldHires", "Mexico")
+
+NAmap <- ggplot() + geom_polygon(data = usa, 
+                                 aes(x=long, y = lat, group = group), 
+                                 fill = "white", 
+                                 color="black") +
+    geom_polygon(data = canada, aes(x=long, y = lat, group = group), 
+                 fill = "white", color="black") + 
+    geom_polygon(data = mexico, aes(x=long, y = lat, group = group), 
+                 fill = "white", color="black") +
+    coord_fixed(xlim = c(-100, -65),  ylim = c(25, 50), ratio = 1.2)
+NAmap
+```
+
+On the above plot you can see that I've plotted The U.S., Canada, and Mexico. I've filled all of the countries with a white fill, which you could easily change to whatever color you'd like. I've also used the `coord_fixed` option to set a ratio of 1.2 (y/x), which seems to produce a good output. That was explained [here](http://eriqande.github.io/rep-res-web/lectures/making-maps-with-R.html) as follows:
+
+>What is this coord_fixed()?
+
+>This is very important when drawing maps.
+>It fixes the relationship between one unit in the y direction and one unit in the x direction.
+>Then, even if you change the outer dimensions of the plot (i.e. by changing the window size or the size of the pdf file you are saving it to (in ggsave for example)), the aspect ratio remains unchanged.
+>In the above case, I decided that if every y unit was 1.3 times longer than an x unit, then the plot came out looking good.
+
+I agree, the plot comes out looking pretty good. I used 1.2 though.
+
+## Adding Rivers and Lakes
+
+I had a hell of a time figuring out how to add specific bodies of water and rivers to the map. I don't want to add every water features since the map would be way too busy, but I couldn't figure out how to only add certain features with the available packages in R. If someone figures this out I would love to see it.
+
+In the meantime there are some excellent resources online for geographic features. I used the [Natural Earth Data](http://www.naturalearthdata.com/) Rivers, Lake Centerlines data to add the Mississippi, Missouri, and Ohio rivers Features to the map. You may want to perform something similar but obviously might want to include different water features. There also may be a better dataset for your analyses available with smaller river features. Dig through Natural Earth Data. There's a lot there.
+
+```{r water_features}
+# Download Natural Earth Data rivers file and read shape file
+fileName <- "http://www.naturalearthdata.com/http//www.naturalearthdata.com/download/50m/physical/ne_50m_rivers_lake_centerlines.zip"
+temp <- tempfile()
+download.file(fileName, temp, mode="wb")
+unzip(temp)
+shapeData <- readShapeLines("ne_50m_rivers_lake_centerlines.shp")
+unlink(c(temp, "ne_*"))
+
+# I read in the shapefile, but I'm not sure how to work with that. But
+# I do understand data frames, so that's what I'm converting it to.
+shapeData@data$id <- rownames(shapeData@data)
+watershedPoints <- fortify(shapeData, region = "id")
+watershedDF <- merge(watershedPoints, shapeData@data, by = "id")
+
+# Now just subset the data to include the rivers that I want to plot:
+watershedDF <- filter(watershedDF, name %in% c("Mississippi", "Missouri", "Ohio"))
+
+# Plot the rivers
+NAmap <- NAmap + geom_path(data=watershedDF, 
+                           aes(x = long, y = lat, group = group), 
+                           color = 'black', size=0.5)
+NAmap
+```
+
+
+## Final Plot
+
+Now to plot the points on this map based on their latitude and longitude:
+
+```{r points}
+NAmap <- NAmap + geom_point(data=NE_fresh, aes(x=Longitude, y=Latitude),
+                            fill=NF, color = "black", 
+                            shape=21, size=5.0) +
+    geom_point(data=NE_salt, aes(x=Longitude, y=Latitude), 
+               fill=NS, color = "black", shape=21, size=5.0) +
+    geom_point(data=South_fresh, aes(x=Longitude, y=Latitude), 
+               fill=SF, color = "black", shape=21, size=5.0) +
+    geom_point(data=South_salt, aes(x=Longitude, y=Latitude), 
+               fill=SS, color = "black", shape=21, size=5.0)
+NAmap
+```
+
+That looks pretty good! I want to just touch this up a little bit. You can change the water color to whatever you like. I've chosen steelblue, which is nice but light gray might be even better. 
+
+```{r final_map}
+NAmap <- NAmap + theme(line = element_blank(),
+              text = element_blank(), 
+              panel.background = element_rect(fill = "steelblue"))
+```
+
+Finally, I've copied and used a terrific function that creates a scalebar for the map from [Ewan Gallic](http://egallic.fr/scale-bar-and-north-arrow-on-a-ggplot2-map/). Please see the original post for more information or if you'd like to include a North pointing arrow, which I haven't done.
+
+```{r scale_bar}
+## I have taken this more or less directly from:
+#http://egallic.fr/scale-bar-and-north-arrow-on-a-ggplot2-map/
+
+#
+# Result #
+#--------#
+# Return a list whose elements are :
+# 	- rectangle : a data.frame containing the coordinates to draw the first rectangle ;
+# 	- rectangle2 : a data.frame containing the coordinates to draw the second rectangle ;
+# 	- legend : a data.frame containing the coordinates of the legend texts, and the texts as well.
+#
+# Arguments : #
+#-------------#
+# lon, lat : longitude and latitude of the bottom left point of the first rectangle to draw ;
+# distanceLon : length of each rectangle ;
+# distanceLat : width of each rectangle ;
+# distanceLegend : distance between rectangles and legend texts ;
+# dist.units : units of distance "km" (kilometers) (default), "nm" (nautical miles), "mi" (statute miles).
+createScaleBar <- function(lon,lat,distanceLon,distanceLat,
+                           distanceLegend, dist.units = "km"){
+    # First rectangle
+    bottomRight <- gcDestination(lon = lon, lat = lat, bearing = 90, 
+                                 dist = distanceLon, dist.units = dist.units,
+                                 model = "WGS84")
+    
+    topLeft <- gcDestination(lon = lon, lat = lat, bearing = 0, 
+                             dist = distanceLat, dist.units = dist.units, 
+                             model = "WGS84")
+    rectangle <- cbind(lon=c(lon, lon, bottomRight[1,"long"],
+                             bottomRight[1,"long"], lon),
+                       lat = c(lat, topLeft[1,"lat"], topLeft[1,"lat"],
+                               lat, lat))
+    rectangle <- data.frame(rectangle, stringsAsFactors = FALSE)
+    
+    # Second rectangle t right of the first rectangle
+    bottomRight2 <- gcDestination(lon = lon, lat = lat, bearing = 90, 
+                                  dist = distanceLon*2, dist.units = dist.units,
+                                  model = "WGS84")
+    rectangle2 <- cbind(lon = c(bottomRight[1,"long"], bottomRight[1,"long"],
+                                bottomRight2[1,"long"], bottomRight2[1,"long"],
+                                bottomRight[1,"long"]),
+                        lat=c(lat, topLeft[1,"lat"], topLeft[1,"lat"], 
+                              lat, lat))
+    rectangle2 <- data.frame(rectangle2, stringsAsFactors = FALSE)
+    
+    # Now let's deal with the text
+    onTop <- gcDestination(lon = lon, lat = lat, bearing = 0, 
+                           dist = distanceLegend, dist.units = dist.units, 
+                           model = "WGS84")
+    onTop2 <- onTop3 <- onTop
+    onTop2[1,"long"] <- bottomRight[1,"long"]
+    onTop3[1,"long"] <- bottomRight2[1,"long"]
+    
+    legend <- rbind(onTop, onTop2, onTop3)
+    legend <- data.frame(cbind(legend, text = c(0, distanceLon, distanceLon*2)),
+                         stringsAsFactors = FALSE, row.names = NULL)
+    return(list(rectangle = rectangle, rectangle2 = rectangle2, 
+                legend = legend))
+}
+
+
+#
+# Result #
+#--------#
+# This function enables to draw a scale bar on a ggplot object, and optionally an orientation arrow #
+# Arguments : #
+#-------------#
+# lon, lat : longitude and latitude of the bottom left point of the first rectangle to draw ;
+# distanceLon : length of each rectangle ;
+# distanceLat : width of each rectangle ;
+# distanceLegend : distance between rectangles and legend texts ;
+# dist.units : units of distance "km" (kilometers) (by default), "nm" (nautical miles), "mi" (statute miles) ;
+# rec.fill, rec2.fill : filling colour of the rectangles (default to white, and black, resp.);
+# rec.colour, rec2.colour : colour of the rectangles (default to black for both);
+# legend.colour : legend colour (default to black);
+# legend.size : legend size (default to 3);
+# orientation : (boolean) if TRUE (default), adds an orientation arrow to the plot ;
+# arrow.length : length of the arrow (default to 500 km) ;
+# arrow.distance : distance between the scale bar and the bottom of the arrow (default to 300 km) ;
+# arrow.North.size : size of the "N" letter (default to 6).
+scaleBar <- function(lon, lat, distanceLon, distanceLat, 
+                     distanceLegend, dist.unit = "km", rec.fill = "white",
+                     rec.colour = "black", rec2.fill = "black", 
+                     rec2.colour = "black", legend.colour = "black", 
+                     legend.size = 3, orientation = TRUE, arrow.length = 500,
+                     arrow.distance = 300, arrow.North.size = 6){
+    laScaleBar <- createScaleBar(lon = lon, lat = lat, 
+                                 distanceLon = distanceLon, 
+                                 distanceLat = distanceLat, 
+                                 distanceLegend = distanceLegend, 
+                                 dist.unit = dist.unit)
+    # First rectangle
+    rectangle1 <- geom_polygon(data = laScaleBar$rectangle, 
+                               aes(x = lon, y = lat), fill = rec.fill, 
+                               colour = rec.colour)
+    
+    # Second rectangle
+    rectangle2 <- geom_polygon(data = laScaleBar$rectangle2, 
+                               aes(x = lon, y = lat), fill = rec2.fill, 
+                               colour = rec2.colour)
+    
+    # Legend
+    scaleBarLegend <- annotate("text", label = paste(laScaleBar$legend[,"text"],
+                                                     dist.unit, sep=""), 
+                               x = laScaleBar$legend[,"long"], 
+                               y = laScaleBar$legend[,"lat"], 
+                               size = legend.size, 
+                               colour = legend.colour, fontface="bold")
+    
+    res <- list(rectangle1, rectangle2, scaleBarLegend)
+    
+    if(orientation){# Add an arrow pointing North
+        coordsArrow <- createOrientationArrow(scaleBar = laScaleBar, 
+                                              length = arrow.length, 
+                                              distance = arrow.distance,
+                                              dist.unit = dist.unit)
+        arrow <- list(geom_segment(data = coordsArrow$res, 
+                                   aes(x = x, y = y, xend = xend, yend = yend)),
+                      annotate("text", label = "N", 
+                               x = coordsArrow$coordsN[1,"x"], 
+                               y = coordsArrow$coordsN[1,"y"], 
+                               size = arrow.North.size, colour = "black"))
+        res <- c(res, arrow)
+    }
+    return(res)
+}
+
+NAmap <- NAmap + scaleBar(lon = -77.5, lat = 25, distanceLon = 500, 
+                          distanceLat = 100, distanceLegend = 200, 
+                          dist.unit = "km", legend.size = 4, 
+                          orientation = FALSE)
+NAmap
+
+```
+
+This might be another way that looks better:
+
+```{r alt_map}
+NAmap <- ggplot() + geom_polygon(data = usa, 
+                                 aes(x=long, y = lat, group = group), 
+                                 fill = "grey88", color="black") +
+    geom_polygon(data = canada, aes(x=long, y = lat, group = group), 
+                 fill = "grey88", color="black") + 
+    geom_polygon(data = mexico, aes(x=long, y = lat, group = group), 
+                 fill = "grey88", color="black") +
+    geom_path(data=watershedDF, aes(x = long, y = lat, group = group), 
+                           color = 'black', size=0.5) + 
+    geom_point(data=NE_fresh, aes(x=Longitude, y=Latitude),
+               fill=NF, color = "black", shape=21, size=5.0) +
+    geom_point(data=NE_salt, aes(x=Longitude, y=Latitude), 
+               fill=NS, color = "black", shape=21, size=5.0) +
+    geom_point(data=South_fresh, aes(x=Longitude, y=Latitude), 
+               fill=SF, color = "black", shape=21, size=5.0) +
+    geom_point(data=South_salt, aes(x=Longitude, y=Latitude), 
+               fill=SS, color = "black", shape=21, size=5.0) + 
+    coord_fixed(xlim = c(-100, -65),  ylim = c(25, 50), ratio = 1.2) +
+    scaleBar(lon = -77.5, lat = 25, distanceLon = 500, 
+                          distanceLat = 100, distanceLegend = 200, 
+                          dist.unit = "km", legend.size = 4, 
+                          orientation = FALSE) + 
+    theme(line = element_blank(),
+          text = element_blank(), 
+          rect = element_blank())
+NAmap
+```
+
+There are a ton of other ways to make this, and I'll keep exploring.
